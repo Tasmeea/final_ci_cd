@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sarawak Energy - Robot Control Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            min-height: 100vh;
+        }
+        
+        .header {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(10px);
+        }
+        
+        .header h1 {
+            font-size: 1.8rem;
+            font-weight: 300;
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            background: #00ff88;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 2rem;
+            padding: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .dashboard-card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 1.5rem;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .dashboard-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+        
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+        
+        .robot-status {
+            grid-column: span 3;
+        }
+        
+        .robot-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        
+        .robot-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 1rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .robot-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+        }
+        
+        .robot-name {
+            font-weight: 600;
+            color: #00ff88;
+        }
+        
+        .battery-bar {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            overflow: hidden;
+            margin: 0.5rem 0;
+        }
+        
+        .battery-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #ff4444, #ffaa00, #00ff88);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+        
+        .sensor-data {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+        }
+        
+        .sensor-item {
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .alerts-section {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .alert-item {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 0.8rem;
+            margin-bottom: 0.5rem;
+            border-left: 4px solid;
+            font-size: 0.9rem;
+        }
+        
+        .alert-info { border-left-color: #3498db; }
+        .alert-warning { border-left-color: #f39c12; }
+        .alert-critical { border-left-color: #e74c3c; }
+        .alert-security { border-left-color: #9b59b6; }
+        
+        .alert-time {
+            font-size: 0.8rem;
+            opacity: 0.7;
+            margin-top: 0.3rem;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+        
+        .stat-item {
+            text-align: center;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+        }
+        
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #00ff88;
+        }
+        
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+        
+        .chart-container {
+            position: relative;
+            height: 200px;
+            margin-top: 1rem;
+        }
+        
+        .visitor-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .visitor-item {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 0.8rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .visitor-name {
+            font-weight: 600;
+        }
+        
+        .visitor-floor {
+            background: #3498db;
+            color: white;
+            padding: 0.2rem 0.5rem;
+            border-radius: 15px;
+            font-size: 0.8rem;
+        }
+        
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 200px;
+            font-size: 1.1rem;
+            opacity: 0.7;
+        }
+
+        @media (max-width: 1200px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+            
+            .robot-status {
+                grid-column: span 2;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+                padding: 1rem;
+            }
+            
+            .robot-status {
+                grid-column: span 1;
+            }
+            
+            .robot-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="connection-status" id="connectionStatus">
+        <div class="status-dot"></div>
+        <span>Connecting...</span>
+    </div>
+    
+    <div class="header">
+        <h1>🤖 Sarawak Energy - Robot Control Dashboard</h1>
+        <div class="status-indicator">
+            <div class="status-dot"></div>
+            <span>System Operational</span>
+        </div>
+    </div>
+    
+    <div class="dashboard-grid">
+        <!-- Robot Status -->
+        <div class="dashboard-card robot-status">
+            <div class="card-header">
+                <div class="card-title">🤖 Robot Status</div>
+                <div id="lastUpdated">Last updated: --</div>
+            </div>
+            <div class="robot-grid" id="robotGrid">
+                <div class="loading">Loading robot data...</div>
+            </div>
+        </div>
+        
+        <!-- System Statistics -->
+        <div class="dashboard-card">
+            <div class="card-header">
+                <div class="card-title">📊 System Statistics</div>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-number" id="activeVisitors">0</div>
+                    <div class="stat-label">Active Visitors</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number" id="activeAlerts">0</div>
+                    <div class="stat-label">Active Alerts</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Environmental Monitoring -->
+        <div class="dashboard-card">
+            <div class="card-header">
+                <div class="card-title">🌡️ Environmental Data</div>
+            </div>
+            <div class="chart-container">
+                <canvas id="environmentChart"></canvas>
+            </div>
+        </div>
+        
+        <!-- Recent Alerts -->
+        <div class="dashboard-card">
+            <div class="card-header">
+                <div class="card-title">⚠️ Recent Alerts</div>
+            </div>
+            <div class="alerts-section" id="alertsSection">
+                <div class="loading">Loading alerts...</div>
+            </div>
+        </div>
+        
+        <!-- Authorized Visitors -->
+        <div class="dashboard-card">
+            <div class="card-header">
+                <div class="card-title">👥 Authorized Visitors</div>
+            </div>
+            <div class="visitor-list" id="visitorList">
+                <div class="loading">Loading visitor data...</div>
+            </div>
+        </div>
+        
+        <!-- Floor Analytics -->
+        <div class="dashboard-card">
+            <div class="card-header">
+                <div class="card-title">🏢 Floor Analytics</div>
+            </div>
+            <div id="floorAnalytics">
+                <div class="loading">Loading floor data...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Socket.IO connection
+        const socket = io();
+        
+        // Chart instance
+        let environmentChart = null;
+        
+        // Dashboard data
+        let dashboardData = {};
+        
+        // Connection status
+        const connectionStatus = document.getElementById('connectionStatus');
+        
+        // Socket event handlers
+        socket.on('connect', function() {
+            connectionStatus.innerHTML = '<div class="status-dot"></div><span>Connected</span>';
+            requestDashboardUpdate();
+        });
+        
+        socket.on('disconnect', function() {
+            connectionStatus.innerHTML = '<div class="status-dot" style="background: #ff4444;"></div><span>Disconnected</span>';
+        });
+        
+        socket.on('dashboard_data', function(data) {
+            dashboardData = data;
+            updateDashboard(data);
+        });
+        
+        socket.on('robot_status_update', function(robots) {
+            updateRobotStatus(robots);
+        });
+        
+        socket.on('new_alert', function(alert) {
+            addNewAlert(alert);
+            updateAlertCount();
+        });
+        
+        socket.on('new_visitor', function(visitor) {
+            addNewVisitor(visitor);
+        });
+        
+        socket.on('threshold_alert', function(alert) {
+            showThresholdAlert(alert);
+        });
+        
+        socket.on('sensor_data_update', function(data) {
+            updateEnvironmentalChart();
+        });
+        
+        function requestDashboardUpdate() {
+            socket.emit('request_dashboard_update');
+        }
+        
+        function updateDashboard(data) {
+            updateRobotStatus(data.robots);
+            updateSystemStats(data);
+            updateAlerts(data.recent_alerts);
+            updateEnvironmentalChart(data.sensor_data);
+            updateLastUpdated(data.last_updated);
+        }
+        
+        function updateRobotStatus(robots) {
+            const robotGrid = document.getElementById('robotGrid');
+            robotGrid.innerHTML = '';
+            
+            Object.values(robots).forEach(robot => {
+                const robotCard = document.createElement('div');
+                robotCard.className = 'robot-card';
+                
+                const batteryColor = robot.battery_level > 60 ? '#00ff88' : 
+                                   robot.battery_level > 30 ? '#ffaa00' : '#ff4444';
+                
+                robotCard.innerHTML = `
+                    <div class="robot-info">
+                        <div class="robot-name">${robot.name}</div>
+                        <div class="robot-status" style="color: ${robot.status === 'active' ? '#00ff88' : '#ff4444'}">
+                            ${robot.status.toUpperCase()}
+                        </div>
+                    </div>
+                    <div class="robot-info">
+                        <span>Floor:</span>
+                        <span>${robot.current_floor}</span>
+                    </div>
+                    <div class="battery-bar">
+                        <div class="battery-fill" style="width: ${robot.battery_level}%; background: ${batteryColor}"></div>
+                    </div>
+                    <div class="sensor-data">
+                        <div class="sensor-item">
+                            <span>Battery:</span>
+                            <span>${robot.battery_level.toFixed(1)}%</span>
+                        </div>
+                        <div class="sensor-item">
+                            <span>ID:</span>
+                            <span>${robot.id}</span>
+                        </div>
+                    </div>
+                `;
+                
+                robotGrid.appendChild(robotCard);
+            });
+        }
+        
+        function updateSystemStats(data) {
+            document.getElementById('activeVisitors').textContent = data.authorized_visitors || 0;
+            document.getElementById('activeAlerts').textContent = data.active_alerts || 0;
+        }
+        
+        function updateAlerts(alerts) {
+            const alertsSection = document.getElementById('alertsSection');
+            alertsSection.innerHTML = '';
+            
+            if (!alerts || alerts.length === 0) {
+                alertsSection.innerHTML = '<div style="text-align: center; opacity: 0.7;">No recent alerts</div>';
+                return;
+            }
+            
+            alerts.reverse().forEach(alert => {
+                const alertItem = document.createElement('div');
+                alertItem.className = `alert-item alert-${alert.type}`;
+                
+                alertItem.innerHTML = `
+                    <div>${alert.message}</div>
+                    <div class="alert-time">${new Date(alert.timestamp).toLocaleString()}</div>
+                `;
+                
+                alertsSection.appendChild(alertItem);
+            });
+        }
+        
+        function updateEnvironmentalChart(sensorData) {
+            const ctx = document.getElementById('environmentChart').getContext('2d');
+            
+            if (environmentChart) {
+                environmentChart.destroy();
+            }
+            
+            if (!sensorData || Object.keys(sensorData).length === 0) {
+                return;
+            }
+            
+            const labels = Object.keys(sensorData);
+            const temperatures = labels.map(robotId => sensorData[robotId]?.temperature || 0);
+            const humidity = labels.map(robotId => sensorData[robotId]?.humidity || 0);
+            
+            environmentChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Temperature (°C)',
+                        data: temperatures,
+                        backgroundColor: 'rgba(255, 99, 132, 0.8)',
+                        yAxisID: 'y'
+                    }, {
+                        label: 'Humidity (%)',
+                        data: humidity,
+                        backgroundColor: 'rgba(54, 162, 235, 0.8)',
+                        yAxisID: 'y1'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: { color: 'white' }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: 'white' },
+                            grid: { color: 'rgba(255, 255, 255, 0.2)' }
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            ticks: { color: 'white' },
+                            grid: { color: 'rgba(255, 255, 255, 0.2)' }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            ticks: { color: 'white' },
+                            grid: { drawOnChartArea: false }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function updateLastUpdated(timestamp) {
+            if (timestamp) {
+                document.getElementById('lastUpdated').textContent = 
+                    `Last updated: ${new Date(timestamp).toLocaleTimeString()}`;
+            }
+        }
+        
+        function addNewAlert(alert) {
+            const alertsSection = document.getElementById('alertsSection');
+            const alertItem = document.createElement('div');
+            alertItem.className = `alert-item alert-${alert.type}`;
+            
+            alertItem.innerHTML = `
+                <div>${alert.message}</div>
+                <div class="alert-time">${new Date(alert.timestamp).toLocaleString()}</div>
+            `;
+            
+            alertsSection.insertBefore(alertItem, alertsSection.firstChild);
+            
+            // Keep only last 10 alerts visible
+            const alerts = alertsSection.children;
+            if (alerts.length > 10) {
+                alertsSection.removeChild(alerts[alerts.length - 1]);
+            }
+        }
+        
+        function addNewVisitor(visitor) {
+            console.log('New visitor authorized:', visitor);
+            // Update visitor list if needed
+        }
+        
+        function showThresholdAlert(alert) {
+            // Create prominent alert for threshold violations
+            const alertDiv = document.createElement('div');
+            alertDiv.style.cssText = `
+                position: fixed;
+                top: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: #e74c3c;
+                color: white;
+                padding: 1rem 2rem;
+                border-radius: 10px;
+                z-index: 1000;
+                font-weight: bold;
+                box-shadow: 0 4px 20px rgba(231, 76, 60, 0.5);
+            `;
+            alertDiv.textContent = `THRESHOLD ALERT: ${alert.violations.join(', ')}`;
+            
+            document.body.appendChild(alertDiv);
+            
+            setTimeout(() => {
+                document.body.removeChild(alertDiv);
+            }, 5000);
+        }
+        
+        function updateAlertCount() {
+            // This would be called when new alerts arrive
+            requestDashboardUpdate();
+        }
+        
+        // Initial load
+        setTimeout(() => {
+            requestDashboardUpdate();
+        }, 1000);
+        
+        // Periodic updates
+        setInterval(requestDashboardUpdate, 30000); // Every 30 seconds
+    </script>
+</body>
+</html>
