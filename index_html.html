@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sarawak Energy - Visitor Verification Kiosk</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #5a67d8;
+        }
+        #video {
+            width: 100%;
+            max-width: 400px;
+            height: 300px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+        }
+        .camera-section {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏢 Sarawak Energy</h1>
+            <h2>Visitor Verification System</h2>
+        </div>
+        
+        <form id="verificationForm">
+            <div class="form-group">
+                <label for="visitorName">Full Name:</label>
+                <input type="text" id="visitorName" name="visitorName" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="destinationFloor">Destination Floor:</label>
+                <select id="destinationFloor" name="destinationFloor" required>
+                    <option value="">Select Floor</option>
+                    <option value="1">Ground Floor - Reception</option>
+                    <option value="2">Floor 2 - Administration</option>
+                    <option value="3">Floor 3 - Engineering</option>
+                    <option value="4">Floor 4 - Operations</option>
+                    <option value="5">Floor 5 - Executive</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="purpose">Purpose of Visit:</label>
+                <textarea id="purpose" name="purpose" rows="3" required></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="duration">Duration (hours):</label>
+                <select id="duration" name="duration" required>
+                    <option value="1">1 hour</option>
+                    <option value="2">2 hours</option>
+                    <option value="4">4 hours</option>
+                    <option value="8">8 hours (full day)</option>
+                </select>
+            </div>
+            
+            <div class="camera-section">
+                <label>Face Verification:</label>
+                <video id="video" autoplay></video>
+                <br><br>
+                <button type="button" onclick="startCamera()">Start Camera</button>
+                <button type="button" onclick="capturePhoto()">Capture Photo</button>
+                <canvas id="canvas" style="display: none;"></canvas>
+            </div>
+            
+            <button type="submit">Submit Verification</button>
+        </form>
+        
+        <div id="result"></div>
+    </div>
+
+    <script>
+        let video = document.getElementById('video');
+        let canvas = document.getElementById('canvas');
+        let ctx = canvas.getContext('2d');
+        let capturedImage = null;
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+            } catch (err) {
+                alert('Camera access denied or not available');
+            }
+        }
+
+        function capturePhoto() {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0);
+            capturedImage = canvas.toDataURL('image/jpeg');
+            alert('Photo captured successfully!');
+        }
+
+        document.getElementById('verificationForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            if (!capturedImage) {
+                alert('Please capture your photo first');
+                return;
+            }
+            
+            const formData = {
+                visitor_name: document.getElementById('visitorName').value,
+                destination_floor: document.getElementById('destinationFloor').value,
+                purpose: document.getElementById('purpose').value,
+                duration_hours: document.getElementById('duration').value,
+                face_image: capturedImage
+            };
+            
+            try {
+                const response = await fetch('/verify_visitor', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(formData)
+                });
+                
+                const result = await response.json();
+                const resultDiv = document.getElementById('result');
+                
+                if (result.success) {
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <h3>✅ Verification Successful</h3>
+                            <p><strong>Visitor ID:</strong> ${result.visitor_id}</p>
+                            <p><strong>Message:</strong> ${result.message}</p>
+                            <p><strong>Valid Until:</strong> ${new Date(result.valid_until).toLocaleString()}</p>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="result error">
+                            <h3>❌ Verification Failed</h3>
+                            <p>${result.message}</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                document.getElementById('result').innerHTML = `
+                    <div class="result error">
+                        <h3>❌ System Error</h3>
+                        <p>Unable to process verification. Please try again.</p>
+                    </div>
+                `;
+            }
+        });
+
+        // Start camera on page load
+        window.addEventListener('load', startCamera);
+    </script>
+</body>
+</html>
