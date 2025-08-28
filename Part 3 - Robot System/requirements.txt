@@ -1,0 +1,9 @@
+flask==2.3.3
+pandas==2.1.1
+numpy==1.24.3
+requests==2.31.0
+plotly==5.17.0
+dash==2.14.1
+dash-bootstrap-components==1.5.0
+python-socketio==5.9.0
+flask-socketio==5.3.6
