@@ -1,32 +1,6 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database - Deploy on EC2 master
-  postgres:
-    image: postgres:13
-    container_name: sarawak-postgres-db
-    environment:
-      - POSTGRES_DB=visitors
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=sarawak2024!
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    networks:
-      - sarawak-network
-    restart: unless-stopped
-
-  # Redis Cache - Deploy on EC2 
-  redis:
-    image: redis:6
-    container_name: sarawak-redis-cache
-    ports:
-      - "6379:6379"
-    networks:
-      - sarawak-network
-    restart: unless-stopped
-
   # Verification System - Deploy on worker-node-ec2
   verification-system:
     build: 
@@ -38,12 +12,10 @@ services:
     volumes:
       - ./shared-data:/app/shared-data
       - ./part1-verification/visitor-images:/app/visitor-images
+      - ./part1-verification/visitor-records:/app/visitor-records
     environment:
-      - DATABASE_URL=postgresql://postgres:sarawak2024!@18.143.157.100:5432/visitors
       - JENKINS_URL=http://18.143.157.100:8080
       - ROBOT_SYSTEM_URL=http://18.143.157.100:5003
-    depends_on:
-      - postgres
     networks:
       - sarawak-network
     restart: unless-stopped
@@ -83,9 +55,15 @@ services:
       - sarawak-network
     restart: unless-stopped
 
-volumes:
-  postgres_data:
-    driver: local
+  # Redis Cache - Optional for session management
+  redis:
+    image: redis:6
+    container_name: sarawak-redis-cache
+    ports:
+      - "6379:6379"
+    networks:
+      - sarawak-network
+    restart: unless-stopped
 
 networks:
   sarawak-network:
