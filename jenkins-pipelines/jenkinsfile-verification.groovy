@@ -5,8 +5,8 @@ pipeline {
         DOCKER_REGISTRY = 'localhost:5000'
         APP_NAME = 'verification-system'
         SHARED_DATA_PATH = '/opt/sarawak-energy/shared-data'
+        VISITOR_RECORDS_PATH = '/opt/sarawak-energy/visitor-records'
         JENKINS_MASTER_URL = 'http://18.143.157.100:8080'
-        DB_HOST = '18.143.157.100'
         ROBOT_SYSTEM_URL = 'http://18.143.157.100:5003'
     }
     
@@ -22,7 +22,9 @@ pipeline {
                     
                     sh """
                         mkdir -p ${SHARED_DATA_PATH}/{archive,temp,logs}
-                        chmod -R 755 ${SHARED_DATA_PATH}
+                        mkdir -p ${VISITOR_RECORDS_PATH}
+                        mkdir -p /opt/sarawak-energy/visitor-images
+                        chmod -R 755 ${SHARED_DATA_PATH} ${VISITOR_RECORDS_PATH}
                     """
                     
                     sh "docker --version"
@@ -76,8 +78,10 @@ pipeline {
                                 --network sarawak-network \\
                                 -p 5001:5000 \\
                                 -v ${SHARED_DATA_PATH}:/app/shared-data \\
-                                -e DATABASE_URL=postgresql://postgres:sarawak2024!@${DB_HOST}:5432/visitors \\
+                                -v /opt/sarawak-energy/visitor-images:/app/visitor-images \\
+                                -v ${VISITOR_RECORDS_PATH}:/app/visitor-records \\
                                 -e ROBOT_SYSTEM_URL=${ROBOT_SYSTEM_URL} \\
+                                -e JENKINS_URL=${JENKINS_MASTER_URL} \\
                                 --restart unless-stopped \\
                                 sarawak-verification:latest || echo 'Container start failed'
                         """
@@ -109,22 +113,30 @@ pipeline {
                                 def visitorData = readJSON file: file
                                 echo "Visitor: ${visitorData.name} -> Floor ${visitorData.destination_floor}"
                                 
-                                def response = sh(
-                                    script: """
-                                        curl -s -X POST ${ROBOT_SYSTEM_URL}/new_visitor \\
-                                        -H 'Content-Type: application/json' \\
-                                        -d @${file} \\
-                                        -w '%{http_code}' || echo '500'
-                                    """,
-                                    returnStdout: true
-                                ).trim()
-                                
-                                if (response.contains('200')) {
-                                    echo "Successfully notified robot system"
-                                    env.NOTIFICATION_SUCCESS = 'true'
+                                // Validate visitor data
+                                if (visitorData.visitor_id && visitorData.name && visitorData.destination_floor) {
+                                    echo "Visitor data valid: ID ${visitorData.visitor_id}"
+                                    
+                                    // Send notification to robot system
+                                    def response = sh(
+                                        script: """
+                                            curl -s -X POST ${ROBOT_SYSTEM_URL}/new_visitor \\
+                                            -H 'Content-Type: application/json' \\
+                                            -d @${file} \\
+                                            -w '%{http_code}' || echo '500'
+                                        """,
+                                        returnStdout: true
+                                    ).trim()
+                                    
+                                    if (response.contains('200')) {
+                                        echo "Successfully notified robot system"
+                                        env.NOTIFICATION_SUCCESS = 'true'
+                                    } else {
+                                        echo "Robot notification failed: ${response}"
+                                        env.NOTIFICATION_SUCCESS = 'false'
+                                    }
                                 } else {
-                                    echo "Robot notification failed: ${response}"
-                                    env.NOTIFICATION_SUCCESS = 'false'
+                                    echo "Invalid visitor data in file: ${file}"
                                 }
                                 
                             } catch (Exception e) {
@@ -132,6 +144,38 @@ pipeline {
                             }
                         }
                     }
+                }
+            }
+        }
+        
+        stage('Generate Visitor Statistics') {
+            when {
+                environment name: 'NEW_VISITORS', value: 'true'
+            }
+            steps {
+                script {
+                    echo "Generating visitor statistics..."
+                    
+                    // Generate daily statistics
+                    def today = new Date().format('yyyy-MM-dd')
+                    def statsFile = "${VISITOR_RECORDS_PATH}/daily_stats_${today}.json"
+                    
+                    sh """
+                        # Count today's visitors
+                        VISITOR_COUNT=\$(find ${VISITOR_RECORDS_PATH} -name 'visitor_*.json' -newermt '${today}' | wc -l)
+                        
+                        # Generate statistics file
+                        cat > ${statsFile} << EOF
+{
+  "date": "${today}",
+  "total_visitors": \$VISITOR_COUNT,
+  "generated_at": "\$(date -Iseconds)",
+  "generated_by": "jenkins-pipeline"
+}
+EOF
+                    """
+                    
+                    echo "Statistics generated for ${today}"
                 }
             }
         }
@@ -147,8 +191,13 @@ pipeline {
                     
                     sh """
                         mkdir -p ${archiveDir}
-                        mv ${SHARED_DATA_PATH}/visitor_*.json ${archiveDir}/ 2>/dev/null || echo 'No files to archive'
+                        
+                        # Move processed visitor files to archive
+                        find ${SHARED_DATA_PATH} -name 'visitor_*.json' -type f -exec mv {} ${archiveDir}/ \\; 2>/dev/null || echo 'No files to archive'
+                        
+                        # Create processing log
                         echo "Processed at \$(date) on ${env.NODE_NAME}" >> ${archiveDir}/processing_log.txt
+                        echo "Files processed: \$(ls -1 ${archiveDir}/visitor_*.json 2>/dev/null | wc -l)" >> ${archiveDir}/processing_log.txt
                     """
                     
                     echo "Visitor data archived to ${archiveDir} on ${env.NODE_NAME}"
@@ -169,25 +218,47 @@ pipeline {
                     if (health.contains('healthy')) {
                         echo "Verification system is healthy"
                         env.SYSTEM_HEALTHY = 'true'
+                        
+                        // Test additional endpoints
+                        def stats = sh(
+                            script: "curl -s http://localhost:5001/stats || echo 'failed'",
+                            returnStdout: true
+                        ).trim()
+                        
+                        if (!stats.contains('failed')) {
+                            echo "Statistics endpoint working"
+                        }
                     } else {
                         echo "Verification system health check failed"
                         env.SYSTEM_HEALTHY = 'false'
                     }
                     
-                    def dbCheck = sh(
-                        script: """
-                            docker run --rm --network sarawak-network postgres:13 \\
-                            psql postgresql://postgres:sarawak2024!@${DB_HOST}:5432/visitors \\
-                            -c 'SELECT COUNT(*) FROM visitors;' || echo 'db_failed'
-                        """,
-                        returnStdout: true
-                    ).trim()
+                    // Check storage directories
+                    sh """
+                        echo "Storage check:"
+                        du -sh ${VISITOR_RECORDS_PATH} 2>/dev/null || echo "Visitor records: Not found"
+                        du -sh /opt/sarawak-energy/visitor-images 2>/dev/null || echo "Visitor images: Not found"
+                        du -sh ${SHARED_DATA_PATH} 2>/dev/null || echo "Shared data: Not found"
+                    """
+                }
+            }
+        }
+        
+        stage('Data Cleanup') {
+            steps {
+                script {
+                    echo "Performing data cleanup..."
                     
-                    if (!dbCheck.contains('db_failed')) {
-                        echo "Database connectivity confirmed"
-                    } else {
-                        echo "Database connectivity failed"
-                    }
+                    sh """
+                        # Clean old trigger files (older than 2 hours)
+                        find ${SHARED_DATA_PATH} -name 'trigger_verification-pipeline_*' -mmin +120 -delete 2>/dev/null || echo 'No old trigger files'
+                        
+                        # Clean old archived data (older than 30 days)
+                        find ${SHARED_DATA_PATH}/archive -name '*.json' -mtime +30 -delete 2>/dev/null || echo 'No old archive files'
+                        
+                        # Clean old visitor images (older than 60 days)
+                        find /opt/sarawak-energy/visitor-images -name '*.jpg' -mtime +60 -delete 2>/dev/null || echo 'No old image files'
+                    """
                 }
             }
         }
@@ -201,28 +272,32 @@ pipeline {
                 echo "Pipeline completed at \$(date) on ${env.NODE_NAME}" >> ${SHARED_DATA_PATH}/logs/verification_pipeline.log
             """
             
+            // Archive pipeline logs
             sh """
-                find ${SHARED_DATA_PATH} -name 'trigger_verification-pipeline_*' -mmin +60 -delete 2>/dev/null || echo 'No old trigger files'
+                mkdir -p ${SHARED_DATA_PATH}/logs/pipeline-history
+                echo "Build: ${BUILD_NUMBER}, Status: \${BUILD_STATUS:-UNKNOWN}, Node: ${env.NODE_NAME}, Time: \$(date)" >> ${SHARED_DATA_PATH}/logs/pipeline-history/verification_history.log
             """
         }
         
         success {
             echo "Verification pipeline succeeded on ${env.NODE_NAME}"
             
+            // Send success notification to robot system
             sh """
                 curl -s -X POST ${ROBOT_SYSTEM_URL}/threshold_alert \\
                 -H 'Content-Type: application/json' \\
-                -d '{"timestamp": "'$(date -Iseconds)'", "violations": ["Pipeline Success"], "sensor_id": "JENKINS_VERIFICATION_${env.NODE_NAME}"}' || echo 'Success notification failed'
+                -d '{"timestamp": "'\$(date -Iseconds)'", "violations": ["Pipeline Success"], "sensor_id": "JENKINS_VERIFICATION_${env.NODE_NAME}"}' || echo 'Success notification failed'
             """
         }
         
         failure {
             echo "Verification pipeline failed on ${env.NODE_NAME}"
             
+            // Send failure alert to robot system
             sh """
                 curl -s -X POST ${ROBOT_SYSTEM_URL}/threshold_alert \\
                 -H 'Content-Type: application/json' \\
-                -d '{"timestamp": "'$(date -Iseconds)'", "violations": ["Pipeline Failure"], "sensor_id": "JENKINS_VERIFICATION_${env.NODE_NAME}"}' || echo 'Failure alert failed'
+                -d '{"timestamp": "'\$(date -Iseconds)'", "violations": ["Pipeline Failure"], "sensor_id": "JENKINS_VERIFICATION_${env.NODE_NAME}"}' || echo 'Failure alert failed'
             """
         }
     }
