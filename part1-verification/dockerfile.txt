@@ -22,6 +22,9 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
+# Create necessary directories
+RUN mkdir -p /app/shared-data /app/visitor-images /app/visitor-records
+
 EXPOSE 5000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
